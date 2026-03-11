@@ -1,0 +1,15 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "node",
+
+    "AQICN_API_KEY": "<your-aqicn-token>",
+    "COLLECTOR_LAT": "21.0152",
+    "COLLECTOR_LON": "105.7999",
+
+    "AZURE_STORAGE_CONNECTION_STRING": "DefaultEndpointsProtocol=https;AccountName=<your-account>;AccountKey=<your-key>;EndpointSuffix=core.windows.net",
+    "AZURE_STORAGE_CONTAINER_NAME": "aqi-datalake",
+    "AQI_DATA_ROOT_PATH": "aqi-history"
+  }
+}
