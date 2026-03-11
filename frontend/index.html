@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <title>AQI Big Data – Azure Data Lake Dashboard</title>
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <style>
+    body {
+      background: linear-gradient(135deg, #0f172a, #020617);
+      color: #e5e7eb;
+      font-family: Arial, sans-serif;
+      padding: 30px;
+    }
+
+    h1 {
+      color: #38bdf8;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .controls {
+      margin: 20px 0;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    input, button, select {
+      padding: 8px 12px;
+      border-radius: 6px;
+      border: none;
+      font-size: 14px;
+    }
+
+    button {
+      background: #38bdf8;
+      color: #020617;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #0ea5e9;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .notice {
+      margin-top: 10px;
+      color: #facc15;
+      font-style: italic;
+    }
+
+    .notice.ok   { color: #4ade80; }
+    .notice.err  { color: #f87171; }
+
+    .chart-box {
+      margin-top: 30px;
+      background: #020617;
+      padding: 20px;
+      border-radius: 12px;
+    }
+
+    footer {
+      margin-top: 20px;
+      opacity: 0.6;
+      font-size: 13px;
+    }
+  </style>
+</head>
+
+<body>
+
+  <h1>📈 AQI Big Data – Azure Data Lake</h1>
+
+  <div class="controls">
+    <label>📅 Chọn ngày:</label>
+    <input type="date" id="datePicker" />
+
+    <label>📊 Chỉ số:</label>
+    <select id="metric">
+      <option value="pm25">PM2.5</option>
+      <option value="aqi">AQI</option>
+      <option value="temp">Nhiệt độ (°C)</option>
+      <option value="humidity">Độ ẩm (%)</option>
+    </select>
+
+    <button id="btnLoad" onclick="loadData()">Xem dữ liệu</button>
+  </div>
+
+  <div id="notice" class="notice"></div>
+
+  <div class="chart-box">
+    <canvas id="chart"></canvas>
+  </div>
+
+  <footer>
+    ⏱️ Dữ liệu tự động cập nhật mỗi 5 phút &amp; lưu trữ phân tán trên Azure Data Lake
+  </footer>
+
+  <script>
+    const API_HISTORY    = "/api/GetHistory";
+    const REFRESH_MS     = 5 * 60 * 1000;   // exactly 5 minutes
+    const FETCH_TIMEOUT  = 20000;            // 20-second timeout per request
+
+    let chart      = null;
+    let isLoading  = false;   // guard against overlapping requests
+
+    // ── helpers ──────────────────────────────────────────────────────────────
+
+    function setNotice(text, type) {
+      const el = document.getElementById("notice");
+      el.className = "notice" + (type ? " " + type : "");
+      el.innerText = text;
+    }
+
+    function generatePlaceholder() {
+      const labels = [];
+      const values = [];
+      const now    = new Date();
+      for (let i = 23; i >= 0; i--) {
+        const t = new Date(now.getTime() - i * 3600000);
+        labels.push(t.getHours().toString().padStart(2, "0") + ":00");
+        values.push(null);
+      }
+      return { labels, values };
+    }
+
+    function renderChart(labels, values, label) {
+      const ctx = document.getElementById("chart").getContext("2d");
+      if (chart) chart.destroy();
+      chart = new Chart(ctx, {
+        type: "line",
+        data: {
+          labels,
+          datasets: [{
+            label,
+            data: values,
+            borderColor: "#38bdf8",
+            backgroundColor: "rgba(56,189,248,0.2)",
+            tension: 0.3,
+            spanGaps: true,
+            pointRadius: 3
+          }]
+        },
+        options: {
+          responsive: true,
+          scales: { y: { beginAtZero: true } }
+        }
+      });
+    }
+
+    // ── main load function ───────────────────────────────────────────────────
+
+    async function loadData() {
+      // Prevent overlapping requests
+      if (isLoading) return;
+      isLoading = true;
+
+      const btn    = document.getElementById("btnLoad");
+      const date   = document.getElementById("datePicker").value;
+      const metric = document.getElementById("metric").value;
+
+      btn.disabled = true;
+      setNotice("⏳ Đang tải dữ liệu từ Azure Data Lake...");
+
+      let url = API_HISTORY;
+      if (date) url += "?date=" + encodeURIComponent(date);
+
+      try {
+        // Abort controller for timeout
+        const controller = new AbortController();
+        const timer      = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
+
+        let res;
+        try {
+          res = await fetch(url, { signal: controller.signal });
+        } finally {
+          clearTimeout(timer);
+        }
+
+        // Handle non-OK HTTP status without crashing
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status} ${res.statusText}`);
+        }
+
+        // Safe JSON parse
+        let json;
+        try {
+          json = await res.json();
+        } catch (_parseErr) {
+          throw new Error("Server returned invalid JSON");
+        }
+
+        if (!json.data || json.data.length === 0) {
+          const p = generatePlaceholder();
+          renderChart(p.labels, p.values, metric.toUpperCase());
+          setNotice("⚠️ Chưa có dữ liệu cho ngày này. Hệ thống đang tích lũy dữ liệu theo thời gian.");
+          return;
+        }
+
+        const labels = json.data.map(d =>
+          d.time ? d.time.slice(11, 16) : "--:--"
+        );
+        const values = json.data.map(d => d[metric] ?? null);
+
+        renderChart(labels, values, metric.toUpperCase());
+        setNotice(`✅ Đã tải ${json.count} bản ghi (data-lake time-series)`, "ok");
+
+      } catch (err) {
+        // Preserve the existing chart – only update the notice
+        if (err.name === "AbortError") {
+          setNotice("⏱️ Yêu cầu quá thời gian – giữ nguyên biểu đồ cũ", "err");
+        } else {
+          setNotice(`❌ Lỗi: ${err.message} – giữ nguyên biểu đồ cũ`, "err");
+        }
+        console.error("loadData error:", err);
+      } finally {
+        isLoading    = false;
+        btn.disabled = false;
+      }
+    }
+
+    // ── init + auto-refresh ──────────────────────────────────────────────────
+
+    window.onload = function () {
+      const today = new Date().toISOString().slice(0, 10);
+      document.getElementById("datePicker").value = today;
+      loadData();
+
+      // Exactly 5-minute interval; uses a wrapper so a slow loadData()
+      // never causes drift or overlapping calls.
+      setInterval(function () {
+        loadData();
+      }, REFRESH_MS);
+    };
+  </script>
+
+</body>
+</html>

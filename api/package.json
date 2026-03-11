@@ -1,0 +1,8 @@
+{
+  "name": "iot-api",
+  "version": "2.0.0",
+  "dependencies": {
+    "node-fetch": "^2.7.0",
+    "@azure/storage-blob": "^12.26.0"
+  }
+}
