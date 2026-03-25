@@ -71,7 +71,7 @@ function getClient() {
 async function writeRecord(record) {
   const client      = getClient();
   const container   = client.getContainerClient(CONTAINER);
-  await container.createIfNotExists({ access: "private" });
+  await container.createIfNotExists();
 
   const name        = blobName(record.timeISO || new Date().toISOString());
   const blockBlob   = container.getBlockBlobClient(name);
