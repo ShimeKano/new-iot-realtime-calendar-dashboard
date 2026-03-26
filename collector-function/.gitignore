@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+.node_modules/
+
+# Local settings – NEVER commit real secrets
+local.settings.json
+
+# Azure Functions output / build artefacts
+bin/
+obj/
+dist/
+.funcpack/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+*.swp

@@ -1,0 +1,16 @@
+{
+  "name": "aqi-collector-function",
+  "version": "1.0.0",
+  "description": "Azure Functions Timer Trigger collector – fetches AQI data every 5 minutes and stores it in Azure Blob Storage (data-lake layout).",
+  "main": "AQITimerCollector/index.js",
+  "scripts": {
+    "start": "func start"
+  },
+  "dependencies": {
+    "@azure/storage-blob": "^12.26.0",
+    "node-fetch": "^2.7.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -25,12 +25,18 @@ hiển thị biểu đồ lịch sử trên giao diện web.
 
 ## 🏗️ Kiến trúc hệ thống (v2 – Data Lake)
 
+Repo này chứa **hai dự án Azure riêng biệt**:
+
+| Thư mục | Loại | Mô tả |
+|---|---|---|
+| `frontend/` + `api/` | **Azure Static Web App** | Frontend dashboard + HTTP API (GetHistory, GetMeasurements, GetRealtimeData) |
+| `collector-function/` | **Azure Function App** | Timer Trigger collector – thu thập AQI mỗi 5 phút, triển khai độc lập |
+
 ```
 [AQICN API]
       ↓
-[GitHub Actions Collector – mỗi 5 phút]
-      ↓
-[Azure Function – GetRealtimeData]
+[Azure Function App – AQITimerCollector]   ← collector-function/ (triển khai riêng)
+      │  Timer Trigger: mỗi 5 phút
       ↓
 [Azure Blob Storage / ADLS Gen2]
    aqi-datalake/
@@ -41,12 +47,13 @@ hiển thị biểu đồ lịch sử trên giao diện web.
              hour=HH/
                <timestamp>_<rand>.json   ← append-only, không bao giờ ghi đè
       ↓
-[Azure Function – GetHistory]
-      ↓
-[Azure Static Web App – Frontend]
+[Azure Static Web App – api/ + frontend/]  ← triển khai qua GitHub Actions
       ↓
 [Chart.js Dashboard – tự refresh 5 phút]
 ```
+
+> **Lưu ý:** Sau khi xác nhận Azure Timer Trigger collector đang hoạt động ổn định,
+> bạn nên tắt hoặc xoá `.github/workflows/collector.yml` để tránh ghi trùng dữ liệu.
 
 ---
 
@@ -57,9 +64,9 @@ hiển thị biểu đồ lịch sử trên giao diện web.
 | Thành phần | Mô tả |
 |---|---|
 | **Azure Static Web Apps** | Hosting frontend + API proxy |
-| **Azure Functions (Node.js)** | Backend serverless |
+| **Azure Functions (Node.js)** | Backend serverless (API + Timer Trigger collector) |
 | **Azure Blob Storage / ADLS Gen2** | Lưu trữ Big Data phân tán |
-| **GitHub Actions** | Collector tự động mỗi 5 phút |
+| **GitHub Actions** | CI/CD deploy (collector có thể chuyển sang Azure Timer) |
 
 ### 🌐 Frontend
 
@@ -97,6 +104,8 @@ aqi-datalake/
 
 ## ⚙️ Biến môi trường
 
+### Static Web App (`api/`)
+
 Cài đặt trong **Azure Static Web Apps → Configuration → Application settings**:
 
 | Biến | Bắt buộc | Mô tả |
@@ -111,9 +120,23 @@ Cài đặt trong **GitHub Actions Secrets**:
 | Secret | Mô tả |
 |---|---|
 | `AZURE_STATIC_WEB_APPS_API_TOKEN` | Deploy token của Static Web App |
-| `COLLECTOR_API_URL` | URL của Static Web App (dùng cho collector) |
+| `COLLECTOR_API_URL` | URL của Static Web App (dùng cho GitHub Actions collector – không cần nếu đã dùng Azure Timer) |
 
-Xem file `.env.example` để biết cú pháp chi tiết.
+### collector-function (`collector-function/`)
+
+Cài đặt trong **Azure Function App → Configuration → Application settings**:
+
+| Biến | Bắt buộc | Mô tả |
+|---|---|---|
+| `AQICN_API_KEY` | ✅ | API key từ [https://aqicn.org/data-platform/token/](https://aqicn.org/data-platform/token/) |
+| `COLLECTOR_LAT` | ✅ | Vĩ độ trạm quan trắc (ví dụ: `21.0152` cho Hà Nội) |
+| `COLLECTOR_LON` | ✅ | Kinh độ trạm quan trắc (ví dụ: `105.7999` cho Hà Nội) |
+| `AZURE_STORAGE_CONNECTION_STRING` | ✅ | Connection string của Azure Storage account |
+| `AZURE_STORAGE_CONTAINER_NAME` | ❌ | Tên container (mặc định: `aqi-datalake`) |
+| `AQI_DATA_ROOT_PATH` | ❌ | Root prefix trong container (mặc định: `aqi-history`) |
+
+Dùng chung cùng Storage account với Static Web App để dữ liệu được đọc bởi cả hai.
+Xem `collector-function/local.settings.json.example` và `.env.example` để biết cú pháp chi tiết.
 
 ---
 
@@ -144,9 +167,93 @@ az storage account show-connection-string \
 Vào **Azure Portal → Static Web App → Configuration → Application settings**
 và thêm các biến ở bảng trên.
 
-### 4. Deploy
+### 4. Deploy Static Web App
 
 Push lên nhánh `main` – GitHub Actions sẽ tự động build và deploy.
+
+---
+
+## 🕐 Triển khai Azure Timer Trigger Collector (`collector-function/`)
+
+Collector chạy mỗi 5 phút trên **Azure Functions** (độc lập với Static Web App).
+Đây là cách đáng tin cậy hơn GitHub Actions `schedule` vì Azure Functions đảm bảo
+thực thi đúng giờ mà không bị ảnh hưởng bởi tải của GitHub.
+
+### 1. Cài đặt Azure Functions Core Tools (dev local)
+
+```bash
+npm install -g azure-functions-core-tools@4 --unsafe-perm true
+```
+
+### 2. Cài đặt dependencies
+
+```bash
+cd collector-function
+npm install
+```
+
+### 3. Cấu hình local
+
+```bash
+cp local.settings.json.example local.settings.json
+# Chỉnh sửa local.settings.json với các giá trị thực
+```
+
+### 4. Chạy local
+
+```bash
+cd collector-function
+func start
+```
+
+Timer sẽ tự động chạy theo lịch. Bạn cũng có thể trigger thủ công:
+
+```bash
+curl -X POST http://localhost:7071/admin/functions/AQITimerCollector \
+  -H "Content-Type: application/json" -d "{}"
+```
+
+### 5. Tạo Azure Function App và deploy
+
+```bash
+# Tạo Function App trên Azure
+az functionapp create \
+  --name <your-function-app-name> \
+  --resource-group <your-rg> \
+  --storage-account <your-storage-account> \
+  --consumption-plan-location <your-region> \
+  --runtime node \
+  --runtime-version 18 \
+  --functions-version 4
+
+# Deploy
+cd collector-function
+func azure functionapp publish <your-function-app-name>
+```
+
+### 6. Cấu hình Application Settings trên Azure
+
+Vào **Azure Portal → Function App → Configuration → Application settings** và thêm:
+
+- `AQICN_API_KEY`
+- `COLLECTOR_LAT`
+- `COLLECTOR_LON`
+- `AZURE_STORAGE_CONNECTION_STRING`
+- `AZURE_STORAGE_CONTAINER_NAME` (tuỳ chọn)
+- `AQI_DATA_ROOT_PATH` (tuỳ chọn)
+
+### 7. Vô hiệu hoá GitHub Actions collector
+
+Sau khi xác nhận Azure Timer Trigger đang hoạt động ổn định (kiểm tra logs trong
+**Azure Portal → Function App → Functions → AQITimerCollector → Monitor**),
+hãy tắt `.github/workflows/collector.yml` để tránh ghi trùng dữ liệu:
+
+```bash
+# Đổi tên file để tắt workflow
+mv .github/workflows/collector.yml .github/workflows/collector.yml.disabled
+```
+
+hoặc xoá trigger `schedule` trong file đó và chỉ giữ `workflow_dispatch`.
 
 ---
 
